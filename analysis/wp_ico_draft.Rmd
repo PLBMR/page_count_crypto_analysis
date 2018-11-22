@@ -1,0 +1,35 @@
+---
+title: "Does Whitepaper Page Count Affect ICO Valuation?"
+author: "Michael Rosenberg and Michael McCaffrey"
+date: "11/22/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      root.dir = "~/Dropbox/repos/page_count_crypto_analysis")
+#packages
+library(lubridate)
+library(tree)
+library(ggplot2)
+#helpers
+pch_lev = 19
+percent_lev = 100
+```
+
+```{r load_data}
+wp_ico_frame <- read.csv("../data/raw/wp_ico.csv",header = TRUE)
+```
+
+# Data Sanity Checks
+
+```{r sanity_check}
+dim(wp_ico_frame)
+#more lines than expected; delete statistics rows
+colnames(wp_ico_frame)
+shit_row_start <- 440
+shit_row_vec <- seq(from = shit_row_start,to = dim(wp_ico_frame)[1],
+                    by = 1)
+wp_ico_frame <- wp_ico_frame[-shit_row_vec,]
+dim(wp_ico_frame)
+```
