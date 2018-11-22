@@ -6,30 +6,136 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
+base_dir <- "~/Dropbox/repos/page_count_crypto_analysis"
 knitr::opts_chunk$set(echo = TRUE,
-                      root.dir = "~/Dropbox/repos/page_count_crypto_analysis")
+                      root.dir = base_dir)
 #packages
 library(lubridate)
 library(tree)
 library(ggplot2)
-#helpers
+library(gridExtra)
+
+#helper functions
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  #adapted from http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+#helper constants
 pch_lev = 19
 percent_lev = 100
 ```
 
-```{r load_data}
-wp_ico_frame <- read.csv("../data/raw/wp_ico.csv",header = TRUE)
+
+```{r set_up_figure_dir,include=FALSE}
+#get base figure directory
+base_figure_dir <- paste(base_dir,"figures",sep = "/")
+dir.create(base_figure_dir,showWarnings = FALSE)
+#get analysis-specific figure directory
+analysis_figure_dir <- paste(base_figure_dir,"page_count_analysis",sep = "/")
+dir.create(analysis_figure_dir,showWarnings = FALSE)
 ```
 
-# Data Sanity Checks
-
-```{r sanity_check}
-dim(wp_ico_frame)
-#more lines than expected; delete statistics rows
-colnames(wp_ico_frame)
-shit_row_start <- 440
-shit_row_vec <- seq(from = shit_row_start,to = dim(wp_ico_frame)[1],
-                    by = 1)
-wp_ico_frame <- wp_ico_frame[-shit_row_vec,]
-dim(wp_ico_frame)
+```{r load_data,include=FALSE}
+wp_ico_frame <- read.csv(
+    paste(base_dir,"data/preprocessed/cleaned_wp_ico.csv",sep = "/"),
+    header = TRUE)
 ```
+
+# Introduction
+
+Within the cryptocurrency markets, there has been a [recent uptick in whitepaper
+length](https://www.longhash.com/news/why-ico-white-papers-keep-getting-longer).
+Between Q1 2016 and Q4 2018, the word count has increased from around 3000 words
+per paper to 9000 words per paper. Many ICO projects slated to launch in 2019
+look to be continuing this trend.
+
+We are interested in seeing if this length increase informs any ICO valuation
+processes. In particular, does whitepaper length predict higher ICO valuations
+by close date?
+
+Our intuition suggests that whitepaper length might be an indication of ICO
+complexity. On one hand, this complexity might be a sign of innovative work,
+which would imply a higher  **(FILL INFORMATION IN HERE)**
+
+To analyze this question, we collected amount raised as close date per
+cryptocurrency via [Coindesk's ICO Tracker](https://www.coindesk.com/ico-tracker).
+We then manually looked up each cryptocurrency's whitepaper and identified the
+page count on those papers. Due to the work-intensive nature of that manual
+process, we decided to solely analyze ICOs between January 2017 and July 2018.
+We will discuss the implications of this data subsetting in our [next steps](
+#next_steps).
+
+# Data Exploration
+
+For our analysis, we will be predicting the amount raised in ICO (in millions)
+per cryptocurrency using page count. Let's take a look at our variables of
+interest.
+
+```{r plot_amount_raised,echo=FALSE,message=FALSE}
+#cleanup from dollar to numeric
+wp_ico_frame$amount_raised_m <- as.numeric(gsub('[$,]', '',
+                                           wp_ico_frame$Amount.Raised.in.ICO...M.))
+#plot
+non_transformed_hist <- (
+    ggplot(data = wp_ico_frame, aes(amount_raised_m))
+        + geom_histogram(col = "#00BDBB",
+                         fill = "#00BDBB")
+        + xlab("Amount Raised ($M)")
+        + ylab ("Count")
+        + ggtitle("Distribution of Amount Raised ($M)")
+        + theme_bw()
+)
+log_transformed_hist <- (
+    ggplot(data = wp_ico_frame, aes(log(amount_raised_m)))
+        + geom_histogram(col = "#00BDBB",
+                         fill = "#00BDBB")
+        + xlab("Log-Amount Raised ($M)")
+        + ylab ("Count")
+        + ggtitle("Distribution of Log-Amount Raised ($M)")
+        + theme_bw()
+        + scale_x_continuous(breaks = round(seq(min(log(wp_ico_frame$amount_raised_m)), 
+                                                max(log(wp_ico_frame$amount_raised_m)),
+                                                by = 2),1))
+)
+ggsave(paste(analysis_figure_dir,"amount_raised_hist.png",sep = "/"),
+       arrangeGrob(non_transformed_hist,log_transformed_hist))
+multiplot(non_transformed_hist,log_transformed_hist)
+```
+_Figure 1: Distribution of Amount Raised in ICO ($M). The regular amount raised
+is on the top, while the log-amount raised is on the bottom._
+
+
+# Next Steps {#next_steps}
