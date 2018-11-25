@@ -245,7 +245,7 @@ concerned about this. However, the sparsity of the page count distribution above
 70 pages suggests that we may not currently be able to make statistically
 meaningful statements about very long whitepapers.
 
-```{r bivariate_plot,echo=FALSE,message=FALSE}
+```{r prepare_assets_for_bivariate_plot_analysis,echo=FALSE,message=FALSE}
 #calculate some cutoff information
 test_cutoff <- 54
 wp_ico_frame$above_cutoff <- (wp_ico_frame$Page.count >= test_cutoff)
@@ -257,6 +257,33 @@ offset_x <- 10
 offset_y <- 1
 #get rid of outlier
 outlier_removed_ico_frame <- wp_ico_frame[-outlier_row,]
+#get some notes pre- and post-cutoff
+mean_log_amt_raised_pre_cutoff <- mean(
+                                       log(
+                            outlier_removed_ico_frame$amount_raised_m[!outlier_removed_ico_frame$above_cutoff]
+                                       )
+)
+mean_log_amt_raised_post_cutoff <- mean(
+                                       log(
+                            outlier_removed_ico_frame$amount_raised_m[outlier_removed_ico_frame$above_cutoff]
+                                       )
+)
+mean_amount_lift <- (
+    (exp(mean_log_amt_raised_post_cutoff) / exp(mean_log_amt_raised_pre_cutoff)) - 1
+)
+presentable_lift <- round(mean_amount_lift * percent_lev,2)
+#get percentile transformation
+#normalize cutoff
+min_page_count <- min(outlier_removed_ico_frame$Page.count)
+max_page_count <- max(outlier_removed_ico_frame$Page.count)
+norm_test_cutoff <- (
+                        ((test_cutoff - min_page_count)
+                         / (max_page_count - min_page_count)
+                        ) * percent_lev
+)
+```
+
+```{r bivariate_plot,echo=FALSE,message=FALSE}
 #then plot
 log_amt_raised_on_page_count_plot <- (
     ggplot(data = wp_ico_frame,aes(x = Page.count
@@ -337,7 +364,35 @@ core ICO set. The dashed black line represents the page count of
 `r test_cutoff`, while the red dashed lines represent the mean log-Amount raised
 pre-cutoff and post-cutoff._
 
-*(FILL DESCRIPTION HERE)*
+When plotting log-amount raised on page count, there is a very clear outlier
+at around `r max(wp_ico_frame$Page.count)` pages. Given that the second largest
+page count is only around `r max(outlier_removed_ico_frame$Page.count)` pages
+and the amount raised at the `r max(wp_ico_frame$Page.count)`-page whitepaper
+is very high, I feel uncomfortable interpolating the page count effect within 
+this gap. Thus, we are going to remove the `r max(wp_ico_frame$Page.count)`-page
+whitepaper from our analysis.
+
+By the linear trend (blue), we see that there is a key positive relationship
+between increased page counts and amount raised. However, it is also clear based
+on our observations (teal), the noise around the linear trend is non-constant.
+In particular, it looks like the variation of log-amount raised decreases after
+around `r test_cutoff` pages. This [heteroscedasticity](https://en.wikipedia.org/wiki/Heteroscedasticity)
+may violate some of the assumptions around statistically testing the
+relationship between log-amount raised and page count. Due to our timeline, we
+leave this robustness check outside the scope of this analysis. We will review
+the implications in our [next steps](#next_steps).
+
+When analyzing this relationship, we also noticed a clear conditional lift in
+log-amount raised at around the `r test_cutoff`-page mark. If we just analyze
+mean amount raised pre-cutoff and post-cutoff, we measure around a
+`r presentable_lift`\% lift in amount raised. While this measurement will
+likely be dampened when controlling for other sources of variation (see
+[methodology](#methodology)), this lift seems substantial enough to be
+considered as an alternative predictive hypothesis to a linear trend (blue).
+While the `r test_cutoff` number is relatively arbitrary, it corresponds with
+the `r round(norm_test_cutoff,0)`th percentile of the page count distribution.
+Thus, we will consider a model that represents the page count effect on
+log-amount raised as a lift around and above the median page count.
 
 # Methodology {#methodology}
 
