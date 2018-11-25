@@ -94,11 +94,16 @@ To analyze this question, we collected amount raised as close date per
 cryptocurrency via [Coindesk's ICO Tracker](https://www.coindesk.com/ico-tracker).
 We then manually looked up each cryptocurrency's whitepaper and identified the
 page count on those papers. Due to the work-intensive nature of that manual
-process, we decided to solely analyze ICOs between January 2017 and July 2018.
+process, we decided to solely analyze ICOs between January 2018 and July 2018.
 We will discuss the implications of this data subsetting in our [next steps](
 #next_steps).
 
 # Data Exploration
+
+Within our dataset, there are around ```dim(wp_ico_frame)[1]``` ICOs between
+January and July of this year. This dataset size is relatively small, which
+suggests that we may not be powered to see statistically significant results
+with a large feature set. We may be able
 
 For our analysis, we will be predicting the amount raised in ICO (in millions)
 per cryptocurrency using page count. Let's take a look at our variables of
@@ -137,5 +142,8 @@ multiplot(non_transformed_hist,log_transformed_hist)
 _Figure 1: Distribution of Amount Raised in ICO ($M). The regular amount raised
 is on the top, while the log-amount raised is on the bottom._
 
+# Methodology
+
+# Results
 
 # Next Steps {#next_steps}
