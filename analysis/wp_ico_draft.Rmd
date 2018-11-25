@@ -14,8 +14,20 @@ library(lubridate)
 library(tree)
 library(ggplot2)
 library(gridExtra)
+library(knitr)
 
-#helper functions
+#helper constants
+pch_lev <- 19
+percent_lev <- 100
+num_breaks_per_hist <- 5
+alpha_lev <- .5
+who_am_i <- 24601
+num_folds <- 5
+block_hexcolor <- "#00BDBB"
+```
+
+```{r helper_functions,include=FALSE}
+#plotting helpers
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
   #adapted from http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/
   library(grid)
@@ -53,11 +65,52 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
   }
 }
 
-#helper constants
-pch_lev = 19
-percent_lev = 100
-```
+get_xlab_for_hist <- function(ico_df,var_name,var_label,round_lev = 1){
+    #Helper function for getting the string for the xlabel of a histogram for
+    #the var_name of interest.
+    #get statistics
+    var_mean <- round(mean(ico_df[,var_name]),round_lev)
+    var_min <- round(min(ico_df[,var_name]),round_lev)
+    var_max <- round(max(ico_df[,var_name]),round_lev)
+    #get strings to add
+    mean_str <- paste("Mean =",var_mean,sep = " ")
+    range_str <- paste("Range = [",var_min,",",var_max,"]",sep = " ")
+    xlab_str <- paste(var_label,
+                      "(",
+                      mean_str,
+                      ",",
+                      range_str,
+                      ")",
+                      sep = " ")
+    return(xlab_str)
+}
 
+#modeling helpers
+get_cross_val_rmse <- function(wp_ico_frame,formula_str,fold_var){
+    #helper for getting cross-validated RMSE (in untransformed terms) for our
+    #given dataset
+    fold_vec <- wp_ico_frame[,fold_var]
+    rmse_vec <- c()
+    for (fold_num in unique(fold_vec)){
+        #filter
+        at_fold_num <- (fold_vec == fold_num)
+        test_frame <- wp_ico_frame[at_fold_num,]
+        train_frame <- wp_ico_frame[!at_fold_num,]
+        #then fit
+        train_lm <- lm(formula_str,data = train_frame)
+        #then test
+        test_pred <- predict(train_lm,newdata = test_frame)
+        #then transform
+        test_nonlogged_pred <- exp(test_pred)
+        target_var_name <- strsplit(formula_str," ")[[1]][1]
+        test_nonlogged_actuals <- exp(test_frame[,target_var_name])
+        #get rmse
+        test_rmse <- sqrt(mean((test_nonlogged_actuals - test_nonlogged_pred) ** 2))
+        rmse_vec <- c(rmse_vec,test_rmse)
+    }
+    return(mean(rmse_vec))
+}
+```
 
 ```{r set_up_figure_dir,include=FALSE}
 #get base figure directory
@@ -74,7 +127,7 @@ wp_ico_frame <- read.csv(
     header = TRUE)
 ```
 
-# Introduction
+# Introduction {#introduction}
 
 Within the cryptocurrency markets, there has been a [recent uptick in whitepaper
 length](https://www.longhash.com/news/why-ico-white-papers-keep-getting-longer).
@@ -98,12 +151,13 @@ process, we decided to solely analyze ICOs between January 2018 and July 2018.
 We will discuss the implications of this data subsetting in our [next steps](
 #next_steps).
 
-# Data Exploration
+# Data Exploration {#data_exploration}
 
-Within our dataset, there are around ```dim(wp_ico_frame)[1]``` ICOs between
+Within our dataset, there are around `r dim(wp_ico_frame)[1]` ICOs between
 January and July of this year. This dataset size is relatively small, which
 suggests that we may not be powered to see statistically significant results
-with a large feature set. We may be able
+with a large feature set. We may be able to do a more in-depth analysis when we
+consider earlier years in our [future work](#next_steps).
 
 For our analysis, we will be predicting the amount raised in ICO (in millions)
 per cryptocurrency using page count. Let's take a look at our variables of
@@ -113,27 +167,32 @@ interest.
 #cleanup from dollar to numeric
 wp_ico_frame$amount_raised_m <- as.numeric(gsub('[$,]', '',
                                            wp_ico_frame$Amount.Raised.in.ICO...M.))
+
 #plot
 non_transformed_hist <- (
     ggplot(data = wp_ico_frame, aes(amount_raised_m))
-        + geom_histogram(col = "#00BDBB",
-                         fill = "#00BDBB")
-        + xlab("Amount Raised ($M)")
+        + geom_histogram(col = block_hexcolor,
+                         fill = block_hexcolor)
+        + xlab(get_xlab_for_hist(wp_ico_frame
+                              , "amount_raised_m"
+                              , "Amount Raised ($M)"
+               )
+        )
         + ylab ("Count")
         + ggtitle("Distribution of Amount Raised ($M)")
         + theme_bw()
 )
 log_transformed_hist <- (
     ggplot(data = wp_ico_frame, aes(log(amount_raised_m)))
-        + geom_histogram(col = "#00BDBB",
-                         fill = "#00BDBB")
+        + geom_histogram(col = block_hexcolor,
+                         fill = block_hexcolor)
         + xlab("Log-Amount Raised ($M)")
         + ylab ("Count")
         + ggtitle("Distribution of Log-Amount Raised ($M)")
         + theme_bw()
         + scale_x_continuous(breaks = round(seq(min(log(wp_ico_frame$amount_raised_m)), 
                                                 max(log(wp_ico_frame$amount_raised_m)),
-                                                by = 2),1))
+                                                length.out = num_breaks_per_hist),1))
 )
 ggsave(paste(analysis_figure_dir,"amount_raised_hist.png",sep = "/"),
        arrangeGrob(non_transformed_hist,log_transformed_hist))
@@ -142,8 +201,232 @@ multiplot(non_transformed_hist,log_transformed_hist)
 _Figure 1: Distribution of Amount Raised in ICO ($M). The regular amount raised
 is on the top, while the log-amount raised is on the bottom._
 
-# Methodology
+We see that the raw amount raised is very right-skewed (top). This is typical of
+financial data; there are many ICOs that have raised relatively little by their
+close date and a handful of ICOs that have raised a huge amount of money. For
+reference, the median amount raised is around
+\$`r round(median(wp_ico_frame$amount_raised_m),1)`M while the max is around
+\$`r round(max(wp_ico_frame$amount_raised_m),1)`M. While this is perfectly reasonable
+as a financial process, it is often difficult for simple predictive models to
+fit right-skewed variables. Because the [natural logarithm](https://en.wikipedia.org/wiki/Logarithm)
+of amount raised is much more normally distributed (which tends to be easier to
+predict with simple regression methods), we will aim to predict the
+log-transformed version of our amount raised in our [methodology](#methodology).
 
-# Results
+```{r plot_page_count_dist,echo=FALSE,message=FALSE}
+page_count_hist <- (
+    ggplot(data = wp_ico_frame, aes(Page.count))
+        + geom_histogram(col = block_hexcolor,
+                         fill = block_hexcolor)
+        + xlab(get_xlab_for_hist(wp_ico_frame
+                                  , "Page.count"
+                                  , "Page Count"
+               )
+        )
+        + ylab ("Count")
+        + ggtitle("Distribution of Page Count Across Whitepapers")
+        + theme_bw()
+        + scale_x_continuous(breaks = round(seq(min(wp_ico_frame$Page.count), 
+                                                max(wp_ico_frame$Page.count),
+                                                length.out = num_breaks_per_hist),0))
+)
+ggsave(paste(analysis_figure_dir,"page_count_hist.png",sep = "/"),
+       page_count_hist)
+page_count_hist
+```
+
+_Figure 2: Distribution of Page Count per ICO whitepaper._
+
+Like amount raised, page count is also a right-skewed variable. On average,
+ICO whitepapers tend to be around `r round(mean(wp_ico_frame$Page.count),1)`,
+but the longest whitepaper in our dataset is around `r round(max(wp_ico_frame$Page.count),1)` pages. Since most simple regression
+methods make no normality assumptions about explanatory variables, I am not too
+concerned about this. However, the sparsity of the page count distribution above
+70 pages suggests that we may not currently be able to make statistically
+meaningful statements about very long whitepapers.
+
+```{r bivariate_plot,echo=FALSE,message=FALSE}
+#calculate some cutoff information
+test_cutoff <- 54
+wp_ico_frame$above_cutoff <- (wp_ico_frame$Page.count >= test_cutoff)
+#outlier values
+outlier_row <- which.max(wp_ico_frame$Page.count)
+outlier_page_count <- wp_ico_frame$Page.count[outlier_row]
+outlier_log_amt_raised <- log(wp_ico_frame$amount_raised_m[outlier_row])
+offset_x <- 10
+offset_y <- 1
+#get rid of outlier
+outlier_removed_ico_frame <- wp_ico_frame[-outlier_row,]
+#then plot
+log_amt_raised_on_page_count_plot <- (
+    ggplot(data = wp_ico_frame,aes(x = Page.count
+                                 , y = log(amount_raised_m)
+                               )
+    )
+        + geom_point(col = block_hexcolor
+                   , fill = block_hexcolor
+                   , alpha = alpha_lev
+        )
+        #get linear predictor
+        + geom_smooth(method = "lm"
+                    , se = FALSE
+                    , data = outlier_removed_ico_frame
+        )
+        #get cutoff at test
+        + geom_vline(xintercept = test_cutoff
+                   , col = "black"
+                   , linetype = "dashed"
+                   , alpha = alpha_lev - .1)
+        #get group means
+        + geom_smooth(aes(y = log(amount_raised_m),group = above_cutoff)
+                    , formula = y ~ 1
+                    , method = "lm"
+                    , col = "red"
+                    , linetype = "dashed"
+                    , se = FALSE
+                    , data = outlier_removed_ico_frame
+        )
+        #point out outlier
+        + annotate("text"
+                 , x = outlier_page_count - offset_x
+                 , y = outlier_log_amt_raised - offset_y
+                 , label = "Outlier"
+                 , fontface = 2
+                 , vjust = 1
+                 , hjust = .5
+        )
+        + annotate("segment"
+                 , x = outlier_page_count - offset_x
+                 , y = outlier_log_amt_raised - offset_y
+                 , xend = outlier_page_count
+                 , yend = outlier_log_amt_raised
+                 , size = .5
+                 , alpha = alpha_lev + .1
+                 , arrow = arrow()
+        )
+        #scale ticks
+        + scale_x_continuous(breaks = round(seq(min(wp_ico_frame$Page.count)
+                                              , max(wp_ico_frame$Page.count)
+                                              , length.out = num_breaks_per_hist
+                                            )
+                                          , 0
+                                      )
+        )
+        + scale_y_continuous(breaks = round(seq(min(log(wp_ico_frame$amount_raised_m))
+                                              , max(log(wp_ico_frame$amount_raised_m))
+                                              , length.out = num_breaks_per_hist
+                                            )
+                                          , 0
+                                      )
+        )
+        #label and theme
+        + theme_bw()
+        + xlab("Page Count")
+        + ylab("Log-Amount Raised ($M)")
+        + ggtitle("Log-Amount Raised ($M) on Page Count")
+)
+ggsave(paste(analysis_figure_dir,"log_amt_raised_on_page_count.png",sep = "/"),
+       log_amt_raised_on_page_count_plot)
+log_amt_raised_on_page_count_plot
+```
+
+_Figure 3: Log-Amount Raised ($M) on Page Count (teal). We have removed the
+page count outlier (Page Count = `r max(wp_ico_frame$Page.count)`) from
+annotation within the plot. The blue line represents the linear trend for the
+core ICO set. The dashed black line represents the page count of
+`r test_cutoff`, while the red dashed lines represent the mean log-Amount raised
+pre-cutoff and post-cutoff._
+
+*(FILL DESCRIPTION HERE)*
+
+# Methodology {#methodology}
+
+*(FILL METHODOLOGY HERE)*
+
+```{r filter_dataset,include=FALSE}
+outlier_row <- which.max(wp_ico_frame$Page.count)
+filtered_wp_ico_frame <- wp_ico_frame[-outlier_row,]
+```
+
+```{r engineer_features_for_method,include=FALSE}
+#target
+filtered_wp_ico_frame$log_amount_raised_m <- log(filtered_wp_ico_frame$amount_raised_m)
+#features
+filtered_wp_ico_frame$month_of_close <- month(
+                                    as.POSIXct(filtered_wp_ico_frame$ICO.Close.Date,
+                                               format = "%m/%d/%y"))
+#normalize page count
+min_page_count <- min(filtered_wp_ico_frame$Page.count)
+max_page_count <- max(filtered_wp_ico_frame$Page.count)
+norm_page_count <- ((filtered_wp_ico_frame$Page.count - min_page_count)
+                    / (max_page_count - min_page_count))
+page_percentile <- norm_page_count * percent_lev
+filtered_wp_ico_frame$page_count_percentile <- page_percentile
+#transform cutoff
+test_cutoff <- 54
+norm_test_cutoff <- (
+                        ((test_cutoff - min_page_count)
+                         / (max_page_count - min_page_count)
+                        ) * percent_lev
+)
+filtered_wp_ico_frame$above_cutoff <- (filtered_wp_ico_frame$page_count_percentile >= norm_test_cutoff)
+```
+
+```{r prepare_for_crossval,include=FALSE}
+#generate fold var
+set.seed(who_am_i)
+fold_levels <- 1:num_folds
+fold_vec <- rep(fold_levels,length.out = dim(filtered_wp_ico_frame)[1])
+#permute
+fold_vec <- sample(fold_vec)
+filtered_wp_ico_frame$fold <- fold_vec
+```
+
+```{r, get_cv_rmse,echo=FALSE,message=FALSE}
+linear_formula <- "log_amount_raised_m ~ Page.count + as.factor(month_of_close)"
+binary_formula <- "log_amount_raised_m ~ above_cutoff + as.factor(month_of_close)"
+linear_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,linear_formula,"fold")
+binary_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,binary_formula,"fold")
+```
+
+# Results {#results}
+
+```{r chosen_mod,echo=FALSE,message=FALSE}
+final_mod_lm <- lm(log_amount_raised_m ~ Page.count + as.factor(month_of_close)
+                 , data = filtered_wp_ico_frame
+)
+#save model
+model_dir <- paste(base_dir,"models",sep = "/")
+dir.create(model_dir)
+saveRDS(final_mod_lm,paste(model_dir,"final_mod_lm.rds",sep = "/"))
+```
+
+```{r study_model,echo=FALSE,message=FALSE}
+#get table
+summary_table <- as.data.frame(summary(final_mod_lm)$coefficients)
+#clean
+summary_table$Percent_Change <- (exp(summary_table$Estimate) - 1) * percent_lev
+scientific_rounding <- 3
+kable(round(summary_table,scientific_rounding))
+```
+
+```{r check_for_multicollinearity,echo=FALSE,message=FALSE}
+(
+    ggplot(aes(x = month_of_close
+             , y = Page.count
+           )
+         , data = filtered_wp_ico_frame
+    )
+    + geom_point(col = block_hexcolor
+               , fill = block_hexcolor
+               , alpha = alpha_lev
+    )
+    + stat_summary(fun.y = mean
+                 , color = "blue"
+                 , geom = "line"
+                 , group = 1
+    )
+)
+```
 
 # Next Steps {#next_steps}
