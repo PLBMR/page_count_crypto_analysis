@@ -696,3 +696,53 @@ argue that we do not need to be concerned about this multicollinearity when
 interpreting the effect of page count on amount raised.
 
 # Next Steps {#next_steps}
+
+In this analysis, we showed there is a statistically significant relationship
+between whitepaper page count and amount raised per ICO. In particular, our
+model suggests that an additional page to a whitepaper is predicted to
+increase ICO valuation by around 1\%. This relationship has the potential to
+have a meaningful impact on how analysts reflect on cryptocurrency whitepapers
+from a very surface-level perspective. However, we have a few next steps in mind
+to improve the robustness of our current model and better understand the
+mechanisms of how whitepapers affect the valuation of ICOs.
+
+1. As discussed in Figure 3, it is clear that the changing variance of
+log-amount raised with respect to page count has the potential to violate our
+current statistical tests. As a general next step, we may want to consider a
+[weighted least squares](https://en.wikipedia.org/wiki/Weighted_least_squares)
+regression model that can account for heteroscedasticity better than our
+current model.
+2. The cross-validated RMSE suggests that our current model is off on average
+by around \$`r round(linear_cv_rmse)`M per ICO. To me, this is severe
+underfitting, and it suggests that we should consider a more feature-dense
+approach to analyzing the valuation process. This will require us to think more
+deeply about the mechanisms that affect ICO valuation and collect features that
+will allow us to capture those mechanisms within our current modeling process.
+3. If we are to consider a more feature-rich regression model, we would
+benefit from introducing ICOs from prior years within our dataset. Given that
+we only have around `r dim(filtered_wp_ico_frame)[1]` cryptocurrencies within
+our final modeling dataset, we will lose statistical significance quickly if
+we overload features when modeling on this 2018 dataset. We will probably be
+able to offset increased dimension to our model if we introduce the large number
+of ICOs that occured in 2017. On a more secondary note, we will also be able
+to control for more seasonal variations when we introduces earlier timepoints
+within our dataset.
+4. On a similar note, we may want to consider other model families besides
+linear models for performing this regression once we have more features. As we
+increase the feature set size, we may be able to automate interaction
+identification by considering [decision trees](https://en.wikipedia.org/wiki/Decision_tree_learning)
+or [kernel methods](https://en.wikipedia.org/wiki/Kernel_regression).
+5. Due to the use of different fonts, formats, and pictures within each
+whitepaper, it may be the case that page count is a noisy signal of true
+whitepaper length. As a robustness check, we may be interested in seeing the
+effect of word count on ICO valuation rather than page count.
+6. From a causal narrative perspective, we are interested in spending more time
+analyzing what are the true mechanisms for how whitepaper length informs
+valuation. In particular, we are interested in using natural language processing
+to see if the language content of the whitepapers informs the valuation process
+to any degree. Since the language content is directly informing how long these
+whitepapers are, identifying this confound might give us a more nuanced sense of
+how communication on cryptocurrency affects eventual valuation at close. If
+the language itself is not presenting meaningful signal to amount raised, it
+could be the case that speculation on these cryptocurrencies is based more on
+perceived complexity (i.e. whitepaper length) than on communicated content.
