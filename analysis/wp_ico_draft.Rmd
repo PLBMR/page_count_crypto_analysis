@@ -15,6 +15,7 @@ library(tree)
 library(ggplot2)
 library(gridExtra)
 library(knitr)
+library(kableExtra)
 
 #helper constants
 pch_lev <- 19
@@ -407,7 +408,9 @@ controls on seasonality (i.e. when the ICO closed in 2018). Based on our
 data exploration, we will consider 2 models of interest:
 
 1. A linear page count effect model:
-    $$\log(Y_i) \sim Page\_Count_i  + \sum_{t = 1}^7 I(Month\_Of\_Close_i == t).$$
+    \begin{equation}
+    \log(Y_i) \sim Page\_Count_i  + \sum_{t = 1}^7 I(Month\_Of\_Close_i == t).
+    \end{equation}
     + $Page\_Count_i$ is the raw page count of cryptocurrency $i$'s whitepaper.
     + $Month\_Of\_Close_i$ indicates the month of the ICO close date for 
         cryptocurrency $i$. Since we are only considering ICOs between January
@@ -422,8 +425,10 @@ data exploration, we will consider 2 models of interest:
         accounting for the effects of speculative hype within the cryptocurrency
         business, which can vary over time.
 2. A percentile effect model:
-    $$\log(Y_i) \sim I(Percentile(Page\_Count_i) >= `r round(test_cutoff_percentile)`\%) + \sum_{t = 1}^7 I(Month\_Of\_Close_i == t).$$
-    + $Percentile(Page\_Count_i) = x\%$ means $x\%$ of whitepapers have equal or
+    \begin{equation}
+    \log(Y_i) \sim I(Percentile(Page\_Count_i) >= `r round(test_cutoff_percentile)`\%) + \sum_{t = 1}^7 I(Month\_Of\_Close_i == t).
+    \end{equation}
+    + $Percentile(Page\_Count_i) = x$\% means $x$\% of whitepapers have equal or
         fewer pages than cryptocurrency $i$'s whitepaper. Thus,
         $I(Percentile(Page\_Count_i) >= `r round(test_cutoff_percentile)`\%) = 1$
         for cryptocurrencies that have page counts in the top
@@ -485,7 +490,9 @@ models to evaluate ($M_1,M_2,...M_F$).
         * Train model $M_f$ using all data besides $D_k$ ($D - D_k$).
         * Predict amount raised ($\hat{Y_i}$) using $M_f$ on $D_k$.
         * Calculate (on $D_k$):
-$$Given\_RMSE = \sqrt{\text{AVG}((Y - \hat{Y})^2)}.$$
+\begin{equation}
+Given\_RMSE = \sqrt{\text{AVG}((Y - \hat{Y})^2)}.
+\end{equation}
         * Add $Given\_RMSE$ to your $RMSE\_Set$ (i.e. $RMSE\_Set := RMSE\_Set \cup \{Given\_RMSE\}$).
     + Get cross-validated RMSE for model $M_f$ via $CV\_RMSE_f = \text{AVG}(RMSE\_Set)$.
 
@@ -522,6 +529,7 @@ norm_test_cutoff <- (
 filtered_wp_ico_frame$above_cutoff <- (filtered_wp_ico_frame$page_count_percentile >= norm_test_cutoff)
 ```
 
+
 ```{r prepare_for_crossval,include=FALSE}
 #generate fold var
 set.seed(who_am_i)
@@ -537,11 +545,15 @@ linear_formula <- "log_amount_raised_m ~ Page.count + as.factor(month_of_close)"
 binary_formula <- "log_amount_raised_m ~ above_cutoff + as.factor(month_of_close)"
 linear_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,linear_formula,"fold")
 binary_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,binary_formula,"fold")
-print(linear_cv_rmse)
-print(binary_cv_rmse)
 ```
 
 # Results {#results}
+
+We see that the cross-validated RMSE for the linear and percentile effect models
+are `r round(linear_cv_rmse,2)` and `r round(binary_cv_rmse,2)` respectively.
+While these RMSEs are very close, I will select the linear model
+(model 1 in the [Methodology](#methodology) section) since its cross-validated
+RMSE is slightly smaller than the percentile model's cross-validated RMSE.
 
 ```{r chosen_mod,echo=FALSE,message=FALSE}
 final_mod_lm <- lm(log_amount_raised_m ~ Page.count + as.factor(month_of_close)
@@ -549,26 +561,99 @@ final_mod_lm <- lm(log_amount_raised_m ~ Page.count + as.factor(month_of_close)
 )
 #save model
 model_dir <- paste(base_dir,"models",sep = "/")
-dir.create(model_dir)
+dir.create(model_dir,showWarnings = FALSE)
 saveRDS(final_mod_lm,paste(model_dir,"final_mod_lm.rds",sep = "/"))
 ```
 
-```{r study_model,echo=FALSE,message=FALSE}
+That being said, this RMSE is concerning from a fit perspective. The linear
+model implies that, on average, our model is off by around 
+\$`r round(linear_cv_rmse)`M for each cryptocurrency's ICO. This is pretty
+severe underfitting of the valuation process, and I think it is worthwhile
+to consider a more feature-dense model in our [next steps](#next_steps).
+
+```{r process_summary_table,echo=FALSE,message=FALSE}
+round_lev <- 3
 #get table
 summary_table <- as.data.frame(summary(final_mod_lm)$coefficients)
 #clean
-summary_table$Percent_Change <- (exp(summary_table$Estimate) - 1) * percent_lev
-scientific_rounding <- 3
-kable(round(summary_table,scientific_rounding))
+summary_table <- round(summary_table,round_lev)
+#get rid of t value column
+summary_table <- summary_table[,!(colnames(summary_table) %in% c("t value"))]
+#get percent change column
+summary_table$Percent_Change <- round(
+                        (exp(summary_table$Estimate) - 1)
+                      , round_lev + 2
+)
+summary_table$Percent_Change[1] <- NA
+#then rename some columns and rows
+colnames(summary_table) <- c("Coefficient"
+                           , "Std. Error"
+                           , "P-Value"
+                           , "Percent Change")
+rownames(summary_table) <- c("(Intercept)"
+                           , "Page Count"
+                           , "Month Of Close = 2 (February)"
+                           , "Month Of Close = 3 (March)"
+                           , "Month Of Close = 4 (April)"
+                           , "Month Of Close = 5 (May)"
+                           , "Month Of Close = 6 (June)"
+                           , "Month Of Close = 7 (July)"
+)
+#then save
+write.csv(summary_table
+        , file = paste(base_dir,"data/processed/coef_table.csv",sep = "/")
+        , na = "")
 ```
 
+```{r display_summary_table,echo=FALSE,message=FALSE}
+#final processing on percent change
+summary_table$`Percent Change` <- paste(summary_table$`Percent Change` * percent_lev
+                                      , "%"
+                                      , sep = "")
+summary_table[1,"Percent Change"] <- NA
+#save html version of the table
+html_table <- kable_styling(kable(summary_table,"html")
+                          , bootstrap_options = c("striped", "hover")
+)
+cat(html_table,file = paste(analysis_figure_dir,"coef_table.html",sep = "/"))
+#then present official coefficient table
+kable(summary_table)
+```
+
+_Table 1: The coefficient table from our selected regression. "Percent Change"
+is the expected percent change in amount raised ($M) implied by the coefficient
+estimates._
+
+We see that when we control for seasonality, increasing the length of a
+whitepaper by 1 page is predicted to increase amount raised by
+around 1\%. This is also very statistically significant, with a p-value below
+$.01$. This means there is a statistically significant likelihood that is having
+some effect on amount raised. That being said, there are still open questions
+on the narrative of the effect. On one end, page count might be simply a form
+of obfuscation; there might not be major differences in the qualities of
+different cryptocurrencies, but whitepaper length might give an impression of
+complexity and due-diligence for an ICO that causes investors to value it
+higher. On the other hand, there might be genuine content differences that is
+informing both the length of whitepapers and there general valuation (e.g.
+new technological breakthroughs, ambitious designs). In this regard, it will
+be important to further analyze the language content of these whitepapers in
+our [next steps](#next_steps).
+
+While there is varying statistical significance of our month indicators, their
+negative coefficients make it clear that there is a general decline in ICO
+valuation post-February. It may be the case that enthusiasm
+around cryptocurrency has declined over the year, which could be informing lower
+ICO valuations post-February.
+
 ```{r check_for_multicollinearity,echo=FALSE,message=FALSE}
-(
+num_months <- length(unique(filtered_wp_ico_frame$month_of_close))
+page_count_on_month_plot <- (
     ggplot(aes(x = month_of_close
              , y = Page.count
            )
          , data = filtered_wp_ico_frame
     )
+    #plot with means
     + geom_point(col = block_hexcolor
                , fill = block_hexcolor
                , alpha = alpha_lev
@@ -578,7 +663,36 @@ kable(round(summary_table,scientific_rounding))
                  , geom = "line"
                  , group = 1
     )
+    + scale_x_continuous(breaks = 1:num_months)
+    + scale_y_continuous(breaks = round(seq(min(filtered_wp_ico_frame$Page.count)
+                                          , max(filtered_wp_ico_frame$Page.count)
+                                          , length.out = num_breaks_per_hist
+                                        )
+                                      , 0
+                                  )
+    )
+    #label and theme
+    + theme_bw()
+    + xlab("Month of Close")
+    + ylab ("Page Count")
+    + ggtitle("Page Count on Month of Close (2018)")
 )
+ggsave(paste(analysis_figure_dir,"page_count_on_month_of_close.png",sep = "/"),
+       page_count_on_month_plot)
+page_count_on_month_plot
 ```
+
+_Figure 4: Page Count on Month of Close for ICOs in our modeling dataset (teal).
+The page count means per month of close are indicated by the blue line._
+
+As a robustness check, we wanted to make sure there was little collinearity
+between page count and month of close. If there was, it would make it difficult
+to interpret the page count effect on amount raised
+when controlling for seasonality. Thankfully,
+it looks like we will not have to worry substantially about this issue. Across
+the months of our dataset, page count hovers between 32 and 36 pages (blue
+line). Since this is very little variation in mean across months, we would
+argue that we do not need to be concerned about this multicollinearity when
+interpreting the effect of page count on amount raised.
 
 # Next Steps {#next_steps}
