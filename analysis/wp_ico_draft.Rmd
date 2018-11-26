@@ -274,12 +274,9 @@ mean_amount_lift <- (
 presentable_lift <- round(mean_amount_lift * percent_lev,2)
 #get percentile transformation
 #normalize cutoff
-min_page_count <- min(outlier_removed_ico_frame$Page.count)
-max_page_count <- max(outlier_removed_ico_frame$Page.count)
-norm_test_cutoff <- (
-                        ((test_cutoff - min_page_count)
-                         / (max_page_count - min_page_count)
-                        ) * percent_lev
+test_cutoff_percentile <- (
+    (1 - (sum(wp_ico_frame$above_cutoff) / length(wp_ico_frame$above_cutoff))) 
+    * percent_lev
 )
 ```
 
@@ -390,13 +387,111 @@ likely be dampened when controlling for other sources of variation (see
 [methodology](#methodology)), this lift seems substantial enough to be
 considered as an alternative predictive hypothesis to a linear trend (blue).
 While the `r test_cutoff` number is relatively arbitrary, it corresponds with
-the `r round(norm_test_cutoff,0)`th percentile of the page count distribution.
+the `r round(test_cutoff_percentile,0)`th percentile of the page count distribution.
 Thus, we will consider a model that represents the page count effect on
-log-amount raised as a lift around and above the median page count.
+log-amount raised as a lift for cryptocurrencies with whitepapers in the 
+top `r percent_lev - round(test_cutoff_percentile,0)`\% for page count.
 
 # Methodology {#methodology}
 
-*(FILL METHODOLOGY HERE)*
+Given the size of our data, we want to limit this initial analysis to using
+simple linear regression. Let $Y_i$ be the amount raised (in \$M) for c
+ryptocurrency $i$. As discussed
+before, $Y_i$ is very right-skewed, which is difficult to predict using simple
+regression methods. Based on Figure 1, we think it will be easier to generate
+a good fit on $\log(Y_i)$.
+
+Given the manual process of gathering more data per cryptocurrency, we are
+planning to focus on the effect of page count on log-amount raised with only
+controls on seasonality (i.e. when the ICO closed in 2018). Based on our
+data exploration, we will consider 2 models of interest:
+
+1. A linear page count effect model:
+    $$\log(Y_i) \sim Page\_Count_i  + \sum_{t = 1}^7 I(Month\_Of\_Close_i == t).$$
+    + $Page\_Count_i$ is the raw page count of cryptocurrency $i$'s whitepaper.
+    + $Month\_Of\_Close_i$ indicates the month of the ICO close date for 
+        cryptocurrency $i$. Since we are only considering ICOs between January
+        and July of 2018, this will be an integer between 1 and 7.
+    + $I(Month\_Of\_Close_i == t)$ is an indicator that equals 1 when
+        cryptocurrency $i$ closed in month $t$ and 0 when said cryptocurrency
+        closed in a month other than $t$. We sum 7 of these indicators for the 7
+        months featured in our dataset.
+    + These indicator variables are meant to control for seasonality. They
+        control for the variation in ICO amount raised from month to month,
+        regardless of the page count of cryptocurrency $i$. These may be
+        accounting for the effects of speculative hype within the cryptocurrency
+        business, which can vary over time.
+2. A percentile effect model:
+    $$\log(Y_i) \sim I(Percentile(Page\_Count_i) >= `r round(test_cutoff_percentile)`\%) + \sum_{t = 1}^7 I(Month\_Of\_Close_i == t).$$
+    + $Percentile(Page\_Count_i) = x\%$ means $x\%$ of whitepapers have equal or
+        fewer pages than cryptocurrency $i$'s whitepaper. Thus,
+        $I(Percentile(Page\_Count_i) >= `r round(test_cutoff_percentile)`\%) = 1$
+        for cryptocurrencies that have page counts in the top
+        `r percent_lev - round(test_cutoff_percentile)`\% of the page count
+        distribution. This is essentially a binary effect that creates a lift
+        in log-amount raised for cryptocurrencies in the top 
+        `r percent_lev - round(test_cutoff_percentile)`\% for whitepaper length.
+        This cutoff was inspired by our exploration in Figure 3.
+        
+Interpreting our regression for $\log(Y_i)$ is a bit different than for a
+regression on $Y_i$. Simply put, our effects are examined as multiplicative
+changes on $Y_i$ rather than linear changes to $Y_i$.
+Say that for instance, we have fit $\log(Y_i)$ with the first model:
+
+$$f(Page\_Count_i,Month\_of\_Close_i) = \beta_0 + \beta_1 Page\_Count_i + \sum_{t = 1}^7 \delta_t I(Month\_Of\_Close_i == t),$$
+
+Where we predict $\widehat{\log(Y_i)} = f(Page\_Count_i,Month\_of\_Close_i).$ We
+can recover our amount raised prediction by exponentiating $\widehat{\log(Y_i)}$:
+
+$$\widehat{Y_i} = e^{\widehat{\log(Y_i)}},$$
+
+where $e$ is the [base of the natural logarithm](https://en.wikipedia.org/wiki/E_(mathematical_constant)).
+it's apparent then that we predict $\widehat{Y_i}$ using $e^{f(Page\_Count_i,Month\_of\_Close_i)}.$
+
+This exponentiation makes all of the linear effects in $f(Page\_Count_i,Month\_of\_Close_i)$ turn into multiplicative effects on
+$Y_i$. For instance, say I wanted to predict the effect on amount raised when
+adding an additional page to a whitepaper. Our prediction for log-amount raised
+($\widehat{\log(Y_i)}$) will be
+
+$$f(Page\_Count_i + 1,Month\_Of\_Close_i) = \beta_1 + f(Page\_Count_i,Month\_Of\_Close_i).$$
+
+Thus, our prediction for $\widehat{Y_i}$ will be
+
+$$e^{\beta_1 + f(Page\_Count_i,Month\_Of\_Close_i)}
+= e^{\beta_1} \cdot e^{f(Page\_Count_i,Month\_Of\_Close_i)}.$$
+
+Since we originally predicted amount raised with 
+$e^{f(Page\_Count_i,Month\_Of\_Close_i)}$, we see that adding an additional
+page to a white paper is predicted to multiply amount raised by $e^{\beta_1}$.
+Thus, an additional page is predicted to increase amount raised by
+$(e^{\beta_1} - 1) \cdot 100$\%.
+
+We will evaluate our models using cross-validated [root mean-squared error (RMSE)](https://en.wikipedia.org/wiki/Mean_squared_error). RMSE is a metric
+that measures the average difference between our
+amount raised predictions ($\hat{Y_i}$) and their actual values in the dataset 
+($Y_i$). Cross-validated RMSE is designed to see how well our model performs on
+average for data outside of our training sample (i.e. test data). This gives
+us a robustness check on how well our model generalizes to outside data.
+We calculate cross-validated RMSE for each of our models the following way:
+
+* Let $D$ be our set of $n$ datapoints ($|D| = n$). We are considering $F$
+models to evaluate ($M_1,M_2,...M_F$).
+* Randomly partition $D$ into $K$ equally-sized folds ($D_1,D_2,...,D_K$).
+    We will iterate through these folds as our test datasets.
+* For each model type $f \in [F]$:
+    + Set $RMSE\_Set = \emptyset$. We will store out-of-sample RMSE in this set
+    for each fold.
+    + For each fold $k \in [K]$:
+        * Train model $M_f$ using all data besides $D_k$ ($D - D_k$).
+        * Predict amount raised ($\hat{Y_i}$) using $M_f$ on $D_k$.
+        * Calculate (on $D_k$):
+$$Given\_RMSE = \sqrt{\text{AVG}((Y - \hat{Y})^2)}.$$
+        * Add $Given\_RMSE$ to your $RMSE\_Set$ (i.e. $RMSE\_Set := RMSE\_Set \cup \{Given\_RMSE\}$).
+    + Get cross-validated RMSE for model $M_f$ via $CV\_RMSE_f = \text{AVG}(RMSE\_Set)$.
+
+Given the small size of our dataset and standard cross-validation practices, 
+we have chosen $K = 5$ folds for our model evaluation process. We will choose
+to select and analyze the model that minimizes cross-validated RMSE.
 
 ```{r filter_dataset,include=FALSE}
 outlier_row <- which.max(wp_ico_frame$Page.count)
@@ -442,6 +537,8 @@ linear_formula <- "log_amount_raised_m ~ Page.count + as.factor(month_of_close)"
 binary_formula <- "log_amount_raised_m ~ above_cutoff + as.factor(month_of_close)"
 linear_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,linear_formula,"fold")
 binary_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,binary_formula,"fold")
+print(linear_cv_rmse)
+print(binary_cv_rmse)
 ```
 
 # Results {#results}
