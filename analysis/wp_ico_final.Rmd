@@ -1,0 +1,783 @@
+---
+title: "Does white paper page count affect $ raised via ICO?"
+author: "Michael Rosenberg and Michael McCaffrey"
+date: "11/27/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+base_dir <- "~/Dropbox/repos/page_count_crypto_analysis"
+knitr::opts_chunk$set(echo = TRUE,
+                      root.dir = base_dir)
+#packages
+library(lubridate)
+library(tree)
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+
+#helper constants
+pch_lev <- 19
+percent_lev <- 100
+num_breaks_per_hist <- 5
+alpha_lev <- .5
+who_am_i <- 24601
+num_folds <- 5
+block_hexcolor <- "#00BDBB"
+```
+
+```{r helper_functions,include=FALSE}
+#plotting helpers
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  #adapted from http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+get_xlab_for_hist <- function(ico_df,var_name,var_label,round_lev = 1){
+    #Helper function for getting the string for the xlabel of a histogram for
+    #the var_name of interest.
+    #get statistics
+    var_mean <- round(mean(ico_df[,var_name]),round_lev)
+    var_min <- round(min(ico_df[,var_name]),round_lev)
+    var_max <- round(max(ico_df[,var_name]),round_lev)
+    #get strings to add
+    mean_str <- paste("Mean =",var_mean,sep = " ")
+    range_str <- paste("Range = [",var_min,",",var_max,"]",sep = " ")
+    xlab_str <- paste(var_label,
+                      "(",
+                      mean_str,
+                      ",",
+                      range_str,
+                      ")",
+                      sep = " ")
+    return(xlab_str)
+}
+
+#modeling helpers
+get_cross_val_rmse <- function(wp_ico_frame,formula_str,fold_var){
+    #helper for getting cross-validated RMSE (in untransformed terms) for our
+    #given dataset
+    fold_vec <- wp_ico_frame[,fold_var]
+    rmse_vec <- c()
+    for (fold_num in unique(fold_vec)){
+        #filter
+        at_fold_num <- (fold_vec == fold_num)
+        test_frame <- wp_ico_frame[at_fold_num,]
+        train_frame <- wp_ico_frame[!at_fold_num,]
+        #then fit
+        train_lm <- lm(formula_str,data = train_frame)
+        #then test
+        test_pred <- predict(train_lm,newdata = test_frame)
+        #then transform
+        test_nonlogged_pred <- exp(test_pred)
+        target_var_name <- strsplit(formula_str," ")[[1]][1]
+        test_nonlogged_actuals <- exp(test_frame[,target_var_name])
+        #get rmse
+        test_rmse <- sqrt(mean((test_nonlogged_actuals - test_nonlogged_pred) ** 2))
+        rmse_vec <- c(rmse_vec,test_rmse)
+    }
+    return(mean(rmse_vec))
+}
+```
+
+```{r set_up_figure_dir,include=FALSE}
+#get base figure directory
+base_figure_dir <- paste(base_dir,"figures",sep = "/")
+dir.create(base_figure_dir,showWarnings = FALSE)
+#get analysis-specific figure directory
+analysis_figure_dir <- paste(base_figure_dir,"page_count_analysis",sep = "/")
+dir.create(analysis_figure_dir,showWarnings = FALSE)
+```
+
+```{r load_data,include=FALSE}
+wp_ico_frame <- read.csv(
+    paste(base_dir,"data/preprocessed/cleaned_wp_ico.csv",sep = "/"),
+    header = TRUE)
+```
+
+# Introduction {#introduction}
+
+Within the cryptocurrency markets, there has been a [recent uptick in white paper
+length](https://www.longhash.com/news/why-ico-white-papers-keep-getting-longer).
+Between Q1 2016 and Q4 2018, the word count has increased from around 3,000 words
+per paper to 9,000 words per paper. Many ICO projects slated to launch in 2019
+look to be continuing this trend.
+
+We are interested in seeing if this increase in length informs the amount of money 
+raised by projects that held an ICO. In particular, does white paper length predict 
+a higher \$ amount raised by close date?
+
+Our intuition suggests that white paper length might, on one hand, be an 
+indication of project complexity. On the other hand, white paper length
+may be a result of additional graphics, stylistic differences and general 
+verbosity.
+
+To analyze this question, we collected \$ amount raised at close date per
+cryptocurrency via [Coindesk's ICO Tracker](https://www.coindesk.com/ico-tracker).
+we then manually looked up each cryptocurrency's white paper and identified the
+page count on those papers. Due to the time-intensive nature of that manual
+process, we decided to start by analyzing ICOs between January 2018 and July 2018.
+We will discuss the implications of this subsetting to this timeframe in our 
+[next steps](#next_steps).
+
+# Data Exploration {#data_exploration}
+
+Within our dataset, there are `r dim(wp_ico_frame)[1]` ICOs between
+January and July of this year. This dataset size is relatively small, which
+suggests that we may not be powered to see statistically significant results
+with a large feature set. I may be able to do a more in-depth analysis when we
+have considered earlier years in our [future work](#next_steps).
+
+For our analysis, we will be predicting the \$ amount raised in ICO 
+(in millions)
+per cryptocurrency using page count. Let's take a look at our variables of
+interest.
+
+```{r plot_amount_raised,echo=FALSE,message=FALSE}
+#cleanup from dollar to numeric
+wp_ico_frame$amount_raised_m <- as.numeric(gsub('[$,]', '',
+                                           wp_ico_frame$Amount.Raised.in.ICO...M.))
+
+#plot
+non_transformed_hist <- (
+    ggplot(data = wp_ico_frame, aes(amount_raised_m))
+        + geom_histogram(col = block_hexcolor,
+                         fill = block_hexcolor)
+        + xlab(get_xlab_for_hist(wp_ico_frame
+                              , "amount_raised_m"
+                              , "Amount Raised ($M)"
+               )
+        )
+        + ylab ("Count")
+        + ggtitle("Distribution of Amount Raised ($M)")
+        + theme_bw()
+)
+log_transformed_hist <- (
+    ggplot(data = wp_ico_frame, aes(log(amount_raised_m)))
+        + geom_histogram(col = block_hexcolor,
+                         fill = block_hexcolor)
+        + xlab("Log-Amount Raised ($M)")
+        + ylab ("Count")
+        + ggtitle("Distribution of Log-Amount Raised ($M)")
+        + theme_bw()
+        + scale_x_continuous(breaks = round(seq(min(log(wp_ico_frame$amount_raised_m)), 
+                                                max(log(wp_ico_frame$amount_raised_m)),
+                                                length.out = num_breaks_per_hist),1))
+)
+ggsave(paste(analysis_figure_dir,"amount_raised_hist.png",sep = "/"),
+       arrangeGrob(non_transformed_hist,log_transformed_hist))
+multiplot(non_transformed_hist,log_transformed_hist)
+```
+_Figure 1: Distribution of Amount Raised in ICO ($M). The regular amount raised
+is on the top, while the log-amount raised is on the bottom._
+
+We see that the raw amount raised is very right-skewed (top). This is not uncommon for
+financial data; there are many projects whose ICOs have raised relatively little by their
+close date and a handful of ICOs that have raised a huge amount of money. For
+reference, the median amount raised is around
+\$`r round(median(wp_ico_frame$amount_raised_m),1)`M while the max is around
+\$`r round(max(wp_ico_frame$amount_raised_m),1)`M. While this is perfectly reasonable
+as a financial process, it is often difficult for simple predictive models to
+fit right-skewed variables. Because the [natural logarithm](https://en.wikipedia.org/wiki/Logarithm)
+of $ amount raised (bottom) is much more normally distributed (which tends to be
+easier to predict with simple regression methods), we will aim to predict the
+log-transformed version of \$ amount raised in our [methodology](#methodology).
+
+```{r plot_page_count_dist,echo=FALSE,message=FALSE}
+page_count_hist <- (
+    ggplot(data = wp_ico_frame, aes(Page.count))
+        + geom_histogram(col = block_hexcolor,
+                         fill = block_hexcolor)
+        + xlab(get_xlab_for_hist(wp_ico_frame
+                                  , "Page.count"
+                                  , "Page Count"
+               )
+        )
+        + ylab ("Count")
+        + ggtitle("Distribution of Page Count Across white papers")
+        + theme_bw()
+        + scale_x_continuous(breaks = round(seq(min(wp_ico_frame$Page.count), 
+                                                max(wp_ico_frame$Page.count),
+                                                length.out = num_breaks_per_hist),0))
+)
+ggsave(paste(analysis_figure_dir,"page_count_hist.png",sep = "/"),
+       page_count_hist)
+page_count_hist
+```
+
+_Figure 2: Distribution of Page Count per ICO white paper._
+
+Like amount raised, page count is also a right-skewed variable. On average,
+white papers tend to be `r round(mean(wp_ico_frame$Page.count),1)`,
+but the longest white paper in our dataset is `r round(max(wp_ico_frame$Page.count),1)` 
+pages. Since most simple regression
+methods make no normality assumptions about explanatory variables, I am not too
+concerned about this. However, the sparsity of the page count distribution above
+70 pages suggests that it may be difficult with this dataset to make 
+statistically meaningful statements about very long white papers.
+
+```{r prepare_assets_for_bivariate_plot_analysis,echo=FALSE,message=FALSE}
+#calculate some cutoff information
+test_cutoff <- 54
+wp_ico_frame$above_cutoff <- (wp_ico_frame$Page.count >= test_cutoff)
+#outlier values
+outlier_row <- which.max(wp_ico_frame$Page.count)
+outlier_page_count <- wp_ico_frame$Page.count[outlier_row]
+outlier_log_amt_raised <- log(wp_ico_frame$amount_raised_m[outlier_row])
+offset_x <- 10
+offset_y <- 1
+#get rid of outlier
+outlier_removed_ico_frame <- wp_ico_frame[-outlier_row,]
+#get some notes pre- and post-cutoff
+mean_log_amt_raised_pre_cutoff <- mean(
+                                       log(
+                            outlier_removed_ico_frame$amount_raised_m[!outlier_removed_ico_frame$above_cutoff]
+                                       )
+)
+mean_log_amt_raised_post_cutoff <- mean(
+                                       log(
+                            outlier_removed_ico_frame$amount_raised_m[outlier_removed_ico_frame$above_cutoff]
+                                       )
+)
+mean_amount_lift <- (
+    (exp(mean_log_amt_raised_post_cutoff) / exp(mean_log_amt_raised_pre_cutoff)) - 1
+)
+presentable_lift <- round(mean_amount_lift * percent_lev,2)
+#get percentile transformation
+#normalize cutoff
+test_cutoff_percentile <- (
+    (1 - (sum(wp_ico_frame$above_cutoff) / length(wp_ico_frame$above_cutoff))) 
+    * percent_lev
+)
+```
+
+```{r bivariate_plot,echo=FALSE,message=FALSE}
+#then plot
+log_amt_raised_on_page_count_plot <- (
+    ggplot(data = wp_ico_frame,aes(x = Page.count
+                                 , y = log(amount_raised_m)
+                               )
+    )
+        + geom_point(col = block_hexcolor
+                   , fill = block_hexcolor
+                   , alpha = alpha_lev
+        )
+        #get linear predictor
+        + geom_smooth(method = "lm"
+                    , se = FALSE
+                    , data = outlier_removed_ico_frame
+        )
+        #get cutoff at test
+        + geom_vline(xintercept = test_cutoff
+                   , col = "black"
+                   , linetype = "dashed"
+                   , alpha = alpha_lev - .1)
+        #get group means
+        + geom_smooth(aes(y = log(amount_raised_m),group = above_cutoff)
+                    , formula = y ~ 1
+                    , method = "lm"
+                    , col = "red"
+                    , linetype = "dashed"
+                    , se = FALSE
+                    , data = outlier_removed_ico_frame
+        )
+        #point out outlier
+        + annotate("text"
+                 , x = outlier_page_count - offset_x
+                 , y = outlier_log_amt_raised - offset_y
+                 , label = "Outlier"
+                 , fontface = 2
+                 , vjust = 1
+                 , hjust = .5
+        )
+        + annotate("segment"
+                 , x = outlier_page_count - offset_x
+                 , y = outlier_log_amt_raised - offset_y
+                 , xend = outlier_page_count
+                 , yend = outlier_log_amt_raised
+                 , size = .5
+                 , alpha = alpha_lev + .1
+                 , arrow = arrow()
+        )
+        #scale ticks
+        + scale_x_continuous(breaks = round(seq(min(wp_ico_frame$Page.count)
+                                              , max(wp_ico_frame$Page.count)
+                                              , length.out = num_breaks_per_hist
+                                            )
+                                          , 0
+                                      )
+        )
+        + scale_y_continuous(breaks = round(seq(min(log(wp_ico_frame$amount_raised_m))
+                                              , max(log(wp_ico_frame$amount_raised_m))
+                                              , length.out = num_breaks_per_hist
+                                            )
+                                          , 0
+                                      )
+        )
+        #label and theme
+        + theme_bw()
+        + xlab("Page Count")
+        + ylab("Log-Amount Raised ($M)")
+        + ggtitle("Log-Amount Raised ($M) on Page Count")
+)
+ggsave(paste(analysis_figure_dir,"log_amt_raised_on_page_count.png",sep = "/"),
+       log_amt_raised_on_page_count_plot)
+log_amt_raised_on_page_count_plot
+```
+
+_Figure 3: Log-Amount Raised in ICO ($M) on Page Count (teal). We have removed 
+the page count outlier (Page Count = `r max(wp_ico_frame$Page.count)`) from
+analysis within the plot. The blue line represents the linear trend for the
+core ICO set. The dashed black line represents the page count of
+`r test_cutoff`, while the red dashed lines represent the mean Log-Amount Raised
+pre-cutoff and post-cutoff._
+
+When plotting log-amount raised on page count, there is a very clear outlier
+at around `r max(wp_ico_frame$Page.count)` pages. Given that the second largest
+page count is only `r max(outlier_removed_ico_frame$Page.count)` pages
+and the amount raised at the `r max(wp_ico_frame$Page.count)`-page white paper
+is very high, we feel uncomfortable interpolating the page count effect within 
+this gap. Thus, we are going to remove the `r max(wp_ico_frame$Page.count)`-page
+white paper from our analysis.
+
+By the linear trend (blue), we see that there is a key positive relationship
+between increased page counts and amount raised. However, our observations (teal)
+make it clear that the noise around the linear trend is non-constant.
+In particular, it looks like the variation of log-amount raised decreases after
+around `r test_cutoff` pages. This [heteroscedasticity](https://en.wikipedia.org/wiki/Heteroscedasticity)
+may violate some assumptions for statistically testing the
+relationship between log-amount raised and page count. For now, we
+leave this robustness check outside the scope of this analysis and consider it
+in our [next steps](#next_steps).
+
+When analyzing this relationship, we also noticed a clear conditional lift in
+log-amount raised at around the `r test_cutoff`-page cutoff (black, dashed). 
+If we just analyze
+mean amount raised pre-cutoff and post-cutoff (red, dashed), we measure around a
+`r presentable_lift`\% lift in amount raised. While this measurement will
+likely be dampened when controlling for other sources of variation (see
+[methodology](#methodology)), this lift seems substantial enough to be
+considered as an alternative predictive hypothesis to a linear trend (blue).
+While the `r test_cutoff` number is relatively arbitrary, it corresponds with
+the `r round(test_cutoff_percentile,0)`th percentile of the page count distribution.
+Thus, we will consider a model that represents the page count effect on
+log-amount raised as a lift for ICO white papers in the 
+top `r percent_lev - round(test_cutoff_percentile,0)`\% for page count.
+
+# Methodology {#methodology}
+
+For transparency on our analysis, we would like to give a deep dive into our
+methodology for predicting \$ amount raised in ICO. However, we realize that
+this description can be quite verbose. Thus, we will provide both a [quick
+summary](#quick_summary) and a [deep dive](#deep_dive) on our approach.
+
+## Quick Summary {#quick_summary}
+
+Due to right-skewedness of \$ amount raised in ICO, we plan to predict
+log-amount raised to lighten the prediction problem for simple regression
+methods. We consider both a linear model and a cutoff model (see Figure 3) that
+control for month-based seasonality in log-amount raised while estimating a
+page count effect. We select the model that
+minimizes [cross-validated root mean squared error (CV-RMSE)](https://en.wikipedia.org/wiki/Root-mean-square_deviation) 
+under a 5-fold simulation. Since we are predicting log-amount raised, we
+interpret our effects on \$ amount raised in ICO as multipliers rather than
+linear changes in money.
+
+## Deep Dive {#deep_dive}
+
+Given the size of our data, we want to limit this initial analysis to an
+application of simple linear regression. Let $Y_i$ be the amount raised 
+in ICO (in \$M) for cryptocurrency $i$. As discussed
+before, $Y_i$ is very right-skewed, which is difficult to predict using simple
+regression methods. Based on Figure 1, we think it will be easier to generate
+a good fit on $\log(Y_i)$.
+
+Given the manual process of gathering more data per cryptocurrency, we are
+planning to focus on the effect of page count on log-amount raised with only
+controls on seasonality (i.e. when the ICO closed in 2018). We will
+consider other controls in our [next steps](#next_steps). Based on our
+data exploration, we will consider 2 models of interest:
+
+1. A linear page count effect model:
+    \begin{equation}
+    \log(Y_i) \sim Page\_Count_i  + \sum_{t = 1}^7 I(Month\_Of\_Close_i = t).
+    \end{equation}
+    + $Page\_Count_i$ is the page count of cryptocurrency $i$'s white paper.
+    + $Month\_Of\_Close_i$ indicates the month of the ICO close date for 
+        cryptocurrency $i$. Since we are only considering ICOs between January
+        and July of 2018, this will be an integer between 1 and 7.
+    + $I(Month\_Of\_Close_i = t)$ is an indicator that equals 1 when
+        cryptocurrency $i$ closed in month $t$ and 0 when said cryptocurrency
+        closed in a month other than $t$. We sum 7 of these indicators for the 7
+        months featured in our dataset.
+    + These indicator variables are meant to control for seasonality. They
+        account for the month-to-month variation expected in log-amount raised
+        when we keep a given white paper's page count constant. 
+        These indicators may be representing the effects of speculative hype 
+        within the cryptocurrency business, which can vary over time.
+2. A percentile effect model:
+    \begin{equation}
+    \log(Y_i) \sim I(Percentile(Page\_Count_i) \geq `r round(test_cutoff_percentile)`\%) + \sum_{t = 1}^7 I(Month\_Of\_Close_i = t).
+    \end{equation}
+    + $Percentile(Page\_Count_i) = x$\% means $x$\% of whitepapers have equal or
+        fewer pages than cryptocurrency $i$'s white paper. Thus,
+        $I(Percentile(Page\_Count_i) \geq `r round(test_cutoff_percentile)`\%) = 1$
+        for white papers that have page counts in the top
+        `r percent_lev - round(test_cutoff_percentile)`\% of the page count
+        distribution. This will generate a binary effect that creates a lift
+        in log-amount raised for white papers in the top 
+        `r percent_lev - round(test_cutoff_percentile)`\% for page count.
+        This cutoff was inspired by our exploration in Figure 3.
+        
+Interpreting our regression for $\log(Y_i)$ is somewhat different when compared
+to a regression on $Y_i$. For a $\log(Y_i)$ regression,
+effects are represented as multiplicative changes on $Y_i$ rather than linear 
+changes to $Y_i$. Say that for instance, we have fit $\log(Y_i)$ with the 
+first model:
+
+$$f(Page\_Count_i,Month\_of\_Close_i) = \beta_0 + \beta_1 Page\_Count_i + \sum_{t = 1}^7 \delta_t I(Month\_Of\_Close_i = t),$$
+
+Where we predict $\widehat{\log(Y_i)} = f(Page\_Count_i,Month\_of\_Close_i).$ We
+can recover our amount raised prediction by exponentiating $\widehat{\log(Y_i)}$:
+
+$$\widehat{Y_i} = e^{\widehat{\log(Y_i)}},$$
+
+where $e$ is the [base of the natural logarithm](https://en.wikipedia.org/wiki/E_(mathematical_constant)).
+Thus, we can predict $\widehat{Y_i}$ using 
+$e^{f(Page\_Count_i,Month\_of\_Close_i)}.$
+
+This exponentiation makes all of the linear effects in $f(Page\_Count_i,Month\_of\_Close_i)$ turn into multiplicative effects on
+$Y_i$. For instance, say I wanted to predict the effect on \$ amount raised in
+ICO when adding an additional page to a cryptocurrency's white paper. Our
+prediction for log-amount raised ($\widehat{\log(Y_i)}$) will be
+
+$$f(Page\_Count_i + 1,Month\_Of\_Close_i) = \beta_1 + f(Page\_Count_i,Month\_Of\_Close_i).$$
+
+Thus, our prediction for $\widehat{Y_i}$ will be
+
+$$e^{\beta_1 + f(Page\_Count_i,Month\_Of\_Close_i)}
+= e^{\beta_1} \cdot e^{f(Page\_Count_i,Month\_Of\_Close_i)}.$$
+
+Since we originally predicted amount raised with 
+$e^{f(Page\_Count_i,Month\_Of\_Close_i)}$, we see that adding an additional
+page to a white paper is predicted to multiply \$ amount raised by 
+$e^{\beta_1}$.
+Thus, an additional page is predicted to increase \$ amount raised in ICO by
+$(e^{\beta_1} - 1) \cdot 100$\%.
+
+We will evaluate our models using cross-validated [root mean-squared error (RMSE)](https://en.wikipedia.org/wiki/Mean_squared_error). RMSE is a metric
+that measures the average difference between our
+amount raised predictions ($\widehat{Y_i}$) and their actual values in the 
+dataset 
+($Y_i$). Cross-validated RMSE (CV-RMSE) indicates how well our model performs on
+average for data outside of our training sample (i.e. test data). This gives
+us a robustness check for how well our model generalizes to outside data.
+We calculate CV-RMSE for each of our models the following way:
+
+* Let $D$ be our set of $n$ datapoints ($|D| = n$). We are considering $F$
+models to evaluate ($M_1,M_2,...M_F$).
+* Randomly partition $D$ into $K$ equally-sized folds ($D_1,D_2,...,D_K$).
+    We will iterate through these folds as our test datasets.
+* For each model type $f \in [F]$:
+    + Set $RMSE\_Set = \emptyset$. We will store out-of-sample RMSE in this set
+    for each fold.
+    + For each fold $k \in [K]$:
+        * Train model $M_f$ using all data besides $D_k$ (i.e. $D - D_k$).
+        * Predict amount raised ($\widehat{Y_i}$) using $M_f$ on $D_k$.
+        * Calculate (on $D_k$):
+\begin{equation}
+Given\_RMSE = \sqrt{\text{AVG}((Y - \hat{Y})^2)}.
+\end{equation}
+        * Add $Given\_RMSE$ to your $RMSE\_Set$ (i.e. $RMSE\_Set := RMSE\_Set \cup \{Given\_RMSE\}$).
+    + Get CV-RMSE for model $M_f$ via $\text{CV-RMSE}_f = \text{AVG}(RMSE\_Set)$.
+
+Given the small size of our dataset and the standard cross-validation practices, 
+we have chosen $K = 5$ folds for our model evaluation process. We will choose
+to select and analyze the model that minimizes CV-RMSE.
+
+```{r filter_dataset,include=FALSE}
+outlier_row <- which.max(wp_ico_frame$Page.count)
+filtered_wp_ico_frame <- wp_ico_frame[-outlier_row,]
+```
+
+```{r engineer_features_for_method,include=FALSE}
+#target
+filtered_wp_ico_frame$log_amount_raised_m <- log(filtered_wp_ico_frame$amount_raised_m)
+#features
+filtered_wp_ico_frame$month_of_close <- month(
+                                    as.POSIXct(filtered_wp_ico_frame$ICO.Close.Date,
+                                               format = "%m/%d/%y"))
+#normalize page count
+min_page_count <- min(filtered_wp_ico_frame$Page.count)
+max_page_count <- max(filtered_wp_ico_frame$Page.count)
+norm_page_count <- ((filtered_wp_ico_frame$Page.count - min_page_count)
+                    / (max_page_count - min_page_count))
+page_percentile <- norm_page_count * percent_lev
+filtered_wp_ico_frame$page_count_percentile <- page_percentile
+#transform cutoff
+test_cutoff <- 54
+norm_test_cutoff <- (
+                        ((test_cutoff - min_page_count)
+                         / (max_page_count - min_page_count)
+                        ) * percent_lev
+)
+filtered_wp_ico_frame$above_cutoff <- (filtered_wp_ico_frame$page_count_percentile >= norm_test_cutoff)
+```
+
+
+```{r prepare_for_crossval,include=FALSE}
+#generate fold var
+set.seed(who_am_i)
+fold_levels <- 1:num_folds
+fold_vec <- rep(fold_levels,length.out = dim(filtered_wp_ico_frame)[1])
+#permute
+fold_vec <- sample(fold_vec)
+filtered_wp_ico_frame$fold <- fold_vec
+```
+
+```{r, get_cv_rmse,echo=FALSE,message=FALSE}
+linear_formula <- "log_amount_raised_m ~ Page.count + as.factor(month_of_close)"
+binary_formula <- "log_amount_raised_m ~ above_cutoff + as.factor(month_of_close)"
+linear_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,linear_formula,"fold")
+binary_cv_rmse <- get_cross_val_rmse(filtered_wp_ico_frame,binary_formula,"fold")
+```
+
+# Results {#results}
+
+We see that the CV-RMSE for the linear and percentile effect models
+are `r round(linear_cv_rmse,2)` and `r round(binary_cv_rmse,2)` respectively.
+While these CV-RMSEs are very close, we will select the linear model
+(model 1 in the [Methodology](#methodology) section) since its 
+CV-RMSE is slightly smaller than the percentile model's CV-RMSE.
+
+```{r chosen_mod,echo=FALSE,message=FALSE}
+final_mod_lm <- lm(log_amount_raised_m ~ Page.count + as.factor(month_of_close)
+                 , data = filtered_wp_ico_frame
+)
+#save model
+model_dir <- paste(base_dir,"models",sep = "/")
+dir.create(model_dir,showWarnings = FALSE)
+saveRDS(final_mod_lm,paste(model_dir,"final_mod_lm.rds",sep = "/"))
+```
+
+That being said, this RMSE is concerning from a fit perspective. The linear
+model implies that, on average, our model is off by around 
+\$`r round(linear_cv_rmse)`M for each cryptocurrency's \$ amount raised in ICO. 
+This is severe underfitting of the valuation process, and we think it is
+worthwhile to consider a more feature-dense model in our
+[next steps](#next_steps).
+
+```{r process_summary_table,echo=FALSE,message=FALSE}
+round_lev <- 3
+#get table
+summary_table <- as.data.frame(summary(final_mod_lm)$coefficients)
+#clean
+summary_table <- round(summary_table,round_lev)
+#get rid of t value column
+summary_table <- summary_table[,!(colnames(summary_table) %in% c("t value"))]
+#get percent change column
+summary_table$Percent_Change <- round(
+                        (exp(summary_table$Estimate) - 1)
+                      , round_lev + 2
+)
+summary_table$Percent_Change[1] <- NA
+#then rename some columns and rows
+colnames(summary_table) <- c("Coefficient"
+                           , "Std. Error"
+                           , "P-Value"
+                           , "Percent Change")
+rownames(summary_table) <- c("(Intercept)"
+                           , "Page Count"
+                           , "Month Of Close = 2 (February)"
+                           , "Month Of Close = 3 (March)"
+                           , "Month Of Close = 4 (April)"
+                           , "Month Of Close = 5 (May)"
+                           , "Month Of Close = 6 (June)"
+                           , "Month Of Close = 7 (July)"
+)
+#then save
+write.csv(summary_table
+        , file = paste(base_dir,"data/processed/coef_table.csv",sep = "/")
+        , na = "")
+```
+
+```{r display_summary_table,echo=FALSE,message=FALSE}
+#final processing on percent change
+summary_table$`Percent Change` <- paste(summary_table$`Percent Change` * percent_lev
+                                      , "%"
+                                      , sep = "")
+summary_table[1,"Percent Change"] <- NA
+#save html version of the table
+html_table <- kable_styling(kable(summary_table,"html")
+                          , bootstrap_options = c("striped", "hover")
+)
+cat(html_table,file = paste(analysis_figure_dir,"coef_table.html",sep = "/"))
+#then present official coefficient table
+kable(summary_table)
+```
+
+_Table 1: The coefficient table from our selected regression. "Percent Change"
+is the expected percent change in amount raised in iCO ($M) implied by the 
+coefficient estimates._
+
+We see that when we control for seasonality, increasing the length of a
+white paper by 1 page is predicted to increase amount raised by
+around 1\%. This is also very statistically significant, with a p-value below
+$.01$. This means that there is a statistically significant chance that 
+page count is having some effect on amount raised.
+That being said, there are still open questions
+on the narrative of the effect. On one end, page count might be simply a form
+of obfuscation; there might not be major differences in the qualities among
+different cryptocurrencies, but white paper length might give an impression of
+complexity and due-diligence for an ICO that causes investors to provide more 
+fundraising. On the other hand, there might be genuine content differences that
+are informing both the length of white papers and the general amount raised
+in ICO (e.g. new technological breakthroughs, ambitious designs).
+In this regard, we should further analyze the language content of these white 
+papers in our [next steps](#next_steps).
+
+While there is varying statistical significance among our month indicators, 
+their negative coefficients make it clear that there is a general decline in 
+\$ amount raised via ICO post-February 2018. It may be the case that enthusiasm
+around cryptocurrency has declined over the year, which could be informing lower
+\$ amounts raised via ICO post-February.
+
+```{r check_for_multicollinearity,echo=FALSE,message=FALSE}
+num_months <- length(unique(filtered_wp_ico_frame$month_of_close))
+page_count_on_month_plot <- (
+    ggplot(aes(x = month_of_close
+             , y = Page.count
+           )
+         , data = filtered_wp_ico_frame
+    )
+    #plot with means
+    + geom_point(col = block_hexcolor
+               , fill = block_hexcolor
+               , alpha = alpha_lev
+    )
+    + stat_summary(fun.y = mean
+                 , color = "blue"
+                 , geom = "line"
+                 , group = 1
+    )
+    + scale_x_continuous(breaks = 1:num_months)
+    + scale_y_continuous(breaks = round(seq(min(filtered_wp_ico_frame$Page.count)
+                                          , max(filtered_wp_ico_frame$Page.count)
+                                          , length.out = num_breaks_per_hist
+                                        )
+                                      , 0
+                                  )
+    )
+    #label and theme
+    + theme_bw()
+    + xlab("Month of Close")
+    + ylab ("Page Count")
+    + ggtitle("Page Count on Month of Close (2018)")
+)
+ggsave(paste(analysis_figure_dir,"page_count_on_month_of_close.png",sep = "/"),
+       page_count_on_month_plot)
+page_count_on_month_plot
+```
+
+_Figure 4: Page Count on Month of Close for ICOs in our modeling dataset (teal).
+The page count means per month of close are indicated by the blue line._
+
+As a robustness check, we wanted to make sure there was little collinearity
+between page count and month of close. If there was, it would make it difficult
+to interpret the page count effect on \$ amount raised when controlling for 
+seasonality. Thankfully, it looks like collinearity is not an issue in this
+context. Across
+the months in our dataset, page count hovers between 32 and 36 pages (blue
+line). Since this is very little variation in mean across months, we would
+argue that we do not need to be concerned about multicollinearity when
+interpreting the effect of page count on \$ amount raised.
+
+# Next Steps {#next_steps}
+
+In this analysis, we identified a statistically significant relationship
+between a cryptocurrency's white paper page count and 
+\$ amount raised in ICO. In particular, our
+model suggests that an additional page to a white paper is predicted to
+increase \$ amount raised in ICO by around 1\%. This relationship could
+potentially impact the way that analysts reflect on cryptocurrency white papers 
+from a surface-level perspective. However, we have a few next steps in mind
+to improve the robustness of our current model and better understand the
+mechanisms of how white papers affect \$ amount raised in ICO.
+
+1. As discussed in Figure 3, it is clear that the changing variance of
+log-amount raised with respect to page count could potentially violate our
+current statistical tests. As a followup, we should consider a
+[weighted least squares](https://en.wikipedia.org/wiki/Weighted_least_squares)
+regression model that can account for heteroscedasticity better than our
+current model.
+2. CV-RMSE suggests that our current model is off on average
+by around \$`r round(linear_cv_rmse)`M per ICO. This is severe
+underfitting, and it suggests that we should consider a more feature-dense
+approach to predicting \$ amount raised. This will require us to think more
+deeply about the mechanisms that affect fundraising per ICO
+and collect features that will capture those mechanisms within our
+current modeling process.
+3. If we want to consider a more feature-rich regression model, we would
+statistically benefit from introducing ICOs from prior years within our dataset.
+Given that
+we only have `r dim(filtered_wp_ico_frame)[1]` cryptocurrencies within
+our final modeling dataset, we will lose statistical significance quickly if
+we overload features for modeling on this 2018 dataset. We can probably 
+offset increased dimension to our model if we introduce the large number
+of ICOs that occurred in 2017 int our modeling dataset. On a more secondary 
+note, we will also be able to control for more seasonal variations when we 
+introduce earlier time points within our dataset.
+4. On a similar note, we should consider other model families besides
+linear models for performing this regression once we have more features. As we
+increase the size of our feature set, we could automate interaction
+identification by considering [decision trees](https://en.wikipedia.org/wiki/Decision_tree_learning)
+or [kernel methods](https://en.wikipedia.org/wiki/Kernel_regression).
+5. Due to the use of different fonts, formats, and pictures within each
+white paper, it is possible that page count is a noisy measure of true
+white paper length. As a robustness check, we may be interested in modeling the
+effect of word count on \$ amount raised in ICO rather than the effect
+of page count.
+6. For a causal narrative, we are interested in spending more time
+mining the true mechanisms for how white paper length informs
+fundraising per ICO. In particular, we are interested in using natural language 
+processing to see if the language content of the white papers informs the
+\$ amount raised in ICO to any degree. Since the language content is directly 
+informing how long these white papers are, identifying this confound will
+present a more nuanced narrative on how
+communication on cryptocurrencies affects fundraising in ICO. If
+language itself is not presenting meaningful signal to \$ amount raised, it
+could be the case that speculation on these cryptocurrencies is based more on
+perceived complexity (i.e. white paper length) than on communicated content.
