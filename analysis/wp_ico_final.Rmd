@@ -452,7 +452,7 @@ data exploration, we will consider 2 models of interest:
     \begin{equation}
     \log(Y_i) \sim I(Percentile(Page\_Count_i) \geq `r round(test_cutoff_percentile)`\%) + \sum_{t = 1}^7 I(Month\_Of\_Close_i = t).
     \end{equation}
-    + $Percentile(Page\_Count_i) = x$\% means $x$\% of whitepapers have equal or
+    + $Percentile(Page\_Count_i) = x$\% means $x$\% of white papers have equal or
         fewer pages than cryptocurrency $i$'s white paper. Thus,
         $I(Percentile(Page\_Count_i) \geq `r round(test_cutoff_percentile)`\%) = 1$
         for white papers that have page counts in the top
@@ -596,7 +596,7 @@ saveRDS(final_mod_lm,paste(model_dir,"final_mod_lm.rds",sep = "/"))
 That being said, this RMSE is concerning from a fit perspective. The linear
 model implies that, on average, our model is off by around 
 \$`r round(linear_cv_rmse)`M for each cryptocurrency's \$ amount raised in ICO. 
-This is severe underfitting of the valuation process, and we think it is
+This is severe underfitting of the fundraising process, and we think it is
 worthwhile to consider a more feature-dense model in our
 [next steps](#next_steps).
 
