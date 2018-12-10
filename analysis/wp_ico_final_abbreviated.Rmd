@@ -1,5 +1,5 @@
 ---
-title: "Does white paper page count affect $ raised via ICO?"
+title: "Does White Paper Page Count Affect $ Raised Via ICO?"
 author: "Michael Rosenberg and Michael McCaffrey"
 date: "11/27/2018"
 output: pdf_document
