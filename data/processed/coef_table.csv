@@ -1,0 +1,9 @@
+"","Coefficient","Std. Error","P-Value","Percent Change"
+"(Intercept)",2.539,0.186,0,
+"Page Count",0.01,0.003,0.005,0.01005
+"Month Of Close = 2 (February)",-0.113,0.205,0.583,-0.10685
+"Month Of Close = 3 (March)",-0.564,0.203,0.006,-0.43107
+"Month Of Close = 4 (April)",-1.228,0.197,0,-0.70712
+"Month Of Close = 5 (May)",-0.607,0.202,0.003,-0.45502
+"Month Of Close = 6 (June)",-0.821,0.209,0,-0.56001
+"Month Of Close = 7 (July)",-1.14,0.198,0,-0.68018

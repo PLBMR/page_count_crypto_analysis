@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-base_dir <- "~/Dropbox/repos/page_count_crypto_analysis"
+base_dir <- getwd()
 knitr::opts_chunk$set(echo = TRUE,
                       root.dir = base_dir)
 #packages
@@ -115,7 +115,7 @@ get_cross_val_rmse <- function(wp_ico_frame,formula_str,fold_var){
 
 ```{r set_up_figure_dir,include=FALSE}
 #get base figure directory
-base_figure_dir <- paste(base_dir,"figures",sep = "/")
+base_figure_dir <- paste(base_dir,"../figures",sep = "/")
 dir.create(base_figure_dir,showWarnings = FALSE)
 #get analysis-specific figure directory
 analysis_figure_dir <- paste(base_figure_dir,"page_count_analysis",sep = "/")
@@ -124,7 +124,7 @@ dir.create(analysis_figure_dir,showWarnings = FALSE)
 
 ```{r load_data,include=FALSE}
 wp_ico_frame <- read.csv(
-    paste(base_dir,"data/preprocessed/cleaned_wp_ico.csv",sep = "/"),
+    paste(base_dir,"../data/preprocessed/cleaned_wp_ico.csv",sep = "/"),
     header = TRUE)
 ```
 
@@ -588,7 +588,7 @@ final_mod_lm <- lm(log_amount_raised_m ~ Page.count + as.factor(month_of_close)
                  , data = filtered_wp_ico_frame
 )
 #save model
-model_dir <- paste(base_dir,"models",sep = "/")
+model_dir <- paste(base_dir,"../models",sep = "/")
 dir.create(model_dir,showWarnings = FALSE)
 saveRDS(final_mod_lm,paste(model_dir,"final_mod_lm.rds",sep = "/"))
 ```
@@ -630,7 +630,7 @@ rownames(summary_table) <- c("(Intercept)"
 )
 #then save
 write.csv(summary_table
-        , file = paste(base_dir,"data/processed/coef_table.csv",sep = "/")
+        , file = paste(base_dir,"../data/processed/coef_table.csv",sep = "/")
         , na = "")
 ```
 
@@ -650,7 +650,7 @@ kable(summary_table)
 ```
 
 _Table 1: The coefficient table from our selected regression. "Percent Change"
-is the expected percent change in amount raised in iCO ($M) implied by the 
+is the expected percent change in amount raised in ICO ($M) implied by the 
 coefficient estimates._
 
 We see that when we control for seasonality, increasing the length of a
