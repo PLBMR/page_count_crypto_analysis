@@ -6,4 +6,5 @@ initial close prices. For questions, feel free to contact the authors
 
 Repo Contents:
 
-* [`analysis`](analysis)
+* [`analysis`](analysis): contains our `.Rmd` files for writing this article.
+  *
