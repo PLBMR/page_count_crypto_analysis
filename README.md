@@ -18,6 +18,12 @@ Repo Contents:
   mathematical sections of the methodology section in an appendix and shortens the
   **Next Steps** section. This essentially contains our code for the publishable version
   of the report.
+  
+  - [`analysis/methodology_appendix.Rmd`](analysis/methodology_appendix.Rmd):
+  This is our `.Rmd` of the methodology appendix contained in
+  [`wp_ico_final_abbreviated.Rmd`](analysis/wp_ico_final_abbreviated.Rmd). This
+  is to ensure that we can link out to a separate methodology deep dive file
+  at publication of our analysis.
 
 * [`code`](code): Contains our code assets for data processing beyond our 
 [`analysis`](analysis).
@@ -106,6 +112,12 @@ within our report.
   a shortened **Next Steps** section, and a **Methodology Appendix** included for the deep dive of our
   methodological processes. This will be used as the basis for our Wordpress article.
   
+  - [`reports/methodology_appendix.pdf`](reports/methodology_appendix.pdf):
+  This is the methodology appendix contained in
+  [`wp_ico_final_abbreviated.pdf`](reports/wp_ico_final_abbreviated.pdf). We
+  link out to this file for a methodology deep dive at publication of our
+  article.
+
 * [`.gitignore`](.gitignore): Files to ignore in our commits.
 
 * [`README.md`](README.md): What you are reading now :D .
